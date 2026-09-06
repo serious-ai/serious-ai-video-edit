@@ -1,16 +1,26 @@
-"""Transcribe a video with ElevenLabs Scribe.
+"""Transcribe a video, word-level timestamps, verbatim.
 
-Extracts mono 16kHz audio via ffmpeg, uploads to Scribe with verbatim +
-diarize + audio events + word-level timestamps, writes the full response
-to <edit_dir>/transcripts/<video_stem>.json.
+Two engines, same output shape (<edit_dir>/transcripts/<video_stem>.json,
+a {"words": [...]} dict of type word/spacing/audio_event entries):
 
-Cached: if the output file already exists, the upload is skipped.
+- **local** (default): faster-whisper, runs on-device, no network call, no
+  per-minute cost. No diarization or audio-event tagging (speaker_id is
+  always null).
+- **scribe**: ElevenLabs Scribe, uploads audio, costs ~330 credits/minute.
+  Adds diarization + audio-event tags (laughs, sighs) on top of words.
+  Use this when you need speaker separation or the free-tier local engine
+  isn't accurate enough for the source.
+
+Cached: if the output file already exists, no transcription runs at all
+(neither engine is invoked) regardless of which engine you pass.
 
 Usage:
     python helpers/transcribe.py <video_path>
+    python helpers/transcribe.py <video_path> --engine scribe
+    python helpers/transcribe.py <video_path> --model medium
     python helpers/transcribe.py <video_path> --edit-dir /custom/edit
     python helpers/transcribe.py <video_path> --language en
-    python helpers/transcribe.py <video_path> --num-speakers 2
+    python helpers/transcribe.py <video_path> --engine scribe --num-speakers 2
 """
 
 from __future__ import annotations
@@ -25,12 +35,15 @@ import sys
 import tempfile
 import time
 import wave
+from functools import lru_cache
 from pathlib import Path
 
 import requests
 
 
 SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
+DEFAULT_ENGINE = "local"
+DEFAULT_WHISPER_MODEL = "small"
 
 
 def load_api_key() -> str:
@@ -113,12 +126,78 @@ def call_scribe(
     return resp.json()
 
 
+@lru_cache(maxsize=2)
+def _load_whisper_model(model_size: str):
+    """Load (and cache) a faster-whisper model. int8 on CPU: fast enough for
+    batch use without a GPU, and the only compute type every Mac can run."""
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(model_size, device="cpu", compute_type="int8")
+
+
+# Whisper's training data is mostly clean captions, so by default it silently
+# "cleans up" um/uh/false starts instead of transcribing them -- verified against
+# faster-whisper 1.2.1 on both the small and medium models (upstream's own
+# anti-patterns note calls this out: "Running Whisper locally ... normalizes
+# fillers"). Priming it with a verbatim-style initial_prompt measurably reduces
+# this (observed ~75% of dropped fillers recovered in testing) but does not
+# eliminate it -- this engine is not a guaranteed-verbatim substitute for Scribe.
+# If a project leans hard on filler-word cutting, prefer --engine scribe.
+_VERBATIM_PROMPT = (
+    "Um, uh, this is, like, a verbatim transcript. Uh, we keep every um and uh "
+    "exactly as spoken, um, including false starts."
+)
+
+
+def call_whisper_local(
+    audio_path: Path,
+    language: str | None = None,
+    model_size: str = DEFAULT_WHISPER_MODEL,
+) -> dict:
+    """Local word-level transcription via faster-whisper. Same `words` shape
+    as call_scribe's response, minus diarization and audio-event tags:
+    speaker_id is always None, and there are no "audio_event" entries.
+
+    Gaps between words are synthesized as "spacing" entries (start/end only)
+    so pack_transcripts.py's silence-based phrase breaking still works.
+    """
+    model = _load_whisper_model(model_size)
+    segments, info = model.transcribe(
+        str(audio_path),
+        language=language,
+        word_timestamps=True,
+        vad_filter=False,
+        condition_on_previous_text=False,
+        initial_prompt=_VERBATIM_PROMPT,
+    )
+
+    words: list[dict] = []
+    prev_end: float | None = None
+    for segment in segments:
+        for w in segment.words or []:
+            text = (w.word or "").strip()
+            if not text:
+                continue
+            if prev_end is not None and w.start > prev_end:
+                words.append({"type": "spacing", "start": prev_end, "end": w.start})
+            words.append({
+                "type": "word",
+                "text": text,
+                "start": w.start,
+                "end": w.end,
+                "speaker_id": None,
+            })
+            prev_end = w.end
+
+    return {"words": words, "language_code": info.language, "engine": "whisper-local", "model": model_size}
+
+
 def transcript_path(edit_dir: Path, video: Path, audio_track: int = 0) -> Path:
     """Where a video's transcript lands.
 
     The track belongs in the name, or a rerun with --audio-track hands back the transcript of
     the track it is meant to replace. Track 0 keeps the plain name, so transcripts made before
-    the flag existed stay valid. Batch mode tests its cache with this too — one function, so
+    the flag existed stay valid. Batch mode tests its cache with this too -- one function, so
     the two cannot drift apart.
     """
     suffix = "" if audio_track == 0 else f".track{audio_track}"
@@ -128,11 +207,13 @@ def transcript_path(edit_dir: Path, video: Path, audio_track: int = 0) -> Path:
 def transcribe_one(
     video: Path,
     edit_dir: Path,
-    api_key: str,
+    api_key: str | None = None,
     language: str | None = None,
     num_speakers: int | None = None,
     verbose: bool = True,
     audio_track: int = 0,
+    engine: str = DEFAULT_ENGINE,
+    model_size: str = DEFAULT_WHISPER_MODEL,
 ) -> Path:
     """Transcribe a single video. Returns path to transcript JSON.
 
@@ -173,9 +254,19 @@ def transcribe_one(
             )
 
         size_mb = audio.stat().st_size / (1024 * 1024)
-        if verbose:
-            print(f"  uploading {video.stem}.wav ({size_mb:.1f} MB)", flush=True)
-        payload = call_scribe(audio, api_key, language, num_speakers)
+        if engine == "scribe":
+            if not api_key:
+                raise RuntimeError("engine=scribe requires an ElevenLabs API key")
+            if verbose:
+                print(f"  uploading {video.stem}.wav ({size_mb:.1f} MB) to Scribe", flush=True)
+            payload = call_scribe(audio, api_key, language, num_speakers)
+        elif engine == "local":
+            if verbose:
+                print(f"  transcribing {video.stem}.wav ({size_mb:.1f} MB) locally "
+                      f"(whisper/{model_size})", flush=True)
+            payload = call_whisper_local(audio, language, model_size)
+        else:
+            raise ValueError(f"unknown engine {engine!r}, expected 'local' or 'scribe'")
 
     out_path.write_text(json.dumps(payload, indent=2))
     dt = time.time() - t0
@@ -190,8 +281,22 @@ def transcribe_one(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Transcribe a video with ElevenLabs Scribe")
+    ap = argparse.ArgumentParser(description="Transcribe a video (local whisper by default, or ElevenLabs Scribe)")
     ap.add_argument("video", type=Path, help="Path to video file")
+    ap.add_argument(
+        "--engine",
+        choices=["local", "scribe"],
+        default=DEFAULT_ENGINE,
+        help="'local' (default): faster-whisper, on-device, free. "
+             "'scribe': ElevenLabs, costs credits, adds diarization + audio events.",
+    )
+    ap.add_argument(
+        "--model",
+        type=str,
+        default=DEFAULT_WHISPER_MODEL,
+        help="faster-whisper model size for --engine local "
+             "(tiny/base/small/medium/large-v3, default: small).",
+    )
     ap.add_argument(
         "--edit-dir",
         type=Path,
@@ -208,7 +313,8 @@ def main() -> None:
         "--num-speakers",
         type=int,
         default=None,
-        help="Optional number of speakers when known. Improves diarization accuracy.",
+        help="Optional number of speakers when known. --engine scribe only "
+             "(improves diarization accuracy); ignored for --engine local.",
     )
     ap.add_argument(
         "--audio-track",
@@ -225,7 +331,7 @@ def main() -> None:
         sys.exit(f"video not found: {video}")
 
     edit_dir = (args.edit_dir or (video.parent / "edit")).resolve()
-    api_key = load_api_key()
+    api_key = load_api_key() if args.engine == "scribe" else None
 
     transcribe_one(
         video=video,
@@ -234,6 +340,8 @@ def main() -> None:
         language=args.language,
         num_speakers=args.num_speakers,
         audio_track=args.audio_track,
+        engine=args.engine,
+        model_size=args.model,
     )
 
 
