@@ -83,7 +83,7 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 ## The process
 
 1. **Inventory.** `ffprobe` every source. `transcribe_batch.py` on the directory. `pack_transcripts.py` to produce `takes_packed.md`. Sample one or two `timeline_view`s for a visual first impression.
-2. **Pre-scan for problems.** One pass over `takes_packed.md` to note verbal slips, obvious mis-speaks, or phrasings to avoid. Plain list, feed into the editor brief.
+2. **Pre-scan for problems.** One pass over `takes_packed.md` to note verbal slips, obvious mis-speaks, or phrasings to avoid. Plain list, feed into the editor brief. Default assumption: every filler word ("um," "uh") and false start on that list gets cut. Don't ask permission for this, it's the default; only preserve one if the user has asked for a natural or unedited feel.
 3. **Converse.** Describe what you see in plain English. Ask questions *shaped by the material*. Collect: content type, target length/aspect, aesthetic/brand direction, pacing feel, must-preserve moments, must-cut moments, animation and grade preferences, subtitle needs. Do not use a fixed checklist — the right questions are different every time.
 4. **Propose strategy.** 4–8 sentences: shape, take choices, cut direction, animation plan, grade direction, subtitle style, length estimate. **Wait for confirmation.**
 5. **Execute.** Produce `edl.json` via the editor sub-agent brief. Drill into `timeline_view` at ambiguous moments. Build animations in parallel sub-agents. Apply grade per-segment. Compose via `render.py`.
@@ -101,6 +101,7 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 
 ## Cut craft (techniques)
 
+- **Cut filler words and false starts aggressively, by default.** This is the tool's core job, not an optional style. Verbatim transcription exists precisely so every "um," "uh," and false start has an accurate word boundary to cut at, don't leave them in the final render unless the user explicitly asked for a natural or unedited feel. If they do ask for that, dial back the aggressiveness in conversation for that project; it's an editorial choice made per-project, not a transcription setting.
 - **Audio-first.** Candidate cuts from word boundaries and silence gaps.
 - **Preserve peaks.** Laughs, punchlines, emphasis beats. Extend past punchlines to include reactions — the laugh IS the beat.
 - **Speaker handoffs** benefit from air between utterances. Common values: 400–600ms. Less for fast-paced, more for cinematic. Taste call.
@@ -149,6 +150,7 @@ RULES:
   - Start/end times must fall on word boundaries from the transcript.
   - Pad cut boundaries (working window 30–200ms).
   - Prefer silences ≥ 400ms as cut targets.
+  - Cut every filler word ("um," "uh") and false start by default, unless the user asked for a natural or unedited feel for this project.
   - Unavoidable slips are kept if no better take exists. Note them in "reason".
   - If over budget, revise: drop a beat or trim tails. Report total and self-correct.
 
