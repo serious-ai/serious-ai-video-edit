@@ -1,5 +1,5 @@
 [project]
-name = "video-use-local"
+name = "serious-ai-video-edit"
 version = "0.1.0"
 description = "Conversation-driven video editor skill for Claude Code, local-first fork of browser-use/video-use (free on-device transcription by default, no ElevenLabs key required)"
 license = { file = "LICENSE" }

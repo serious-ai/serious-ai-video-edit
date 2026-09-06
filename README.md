@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="static/video-use-banner.png" alt="video-use-local" width="100%">
+  <img src="static/video-use-banner.png" alt="serious-ai-video-edit" width="100%">
 </p>
 
-# video-use-local
+# Serious AI Video Edit
 
-Edit videos with Claude Code, by conversation. **A community fork of [browser-use/video-use](https://github.com/browser-use/video-use)** (same editor, but transcription defaults to a free, on-device Whisper model instead of ElevenLabs Scribe, so there's no API key and no per-minute cost to get started).
+By [Serious AI](https://github.com/serious-ai). Edit videos with Claude Code, by conversation. **A community fork of [browser-use/video-use](https://github.com/browser-use/video-use)** (same editor, but transcription defaults to a free, on-device Whisper model instead of ElevenLabs Scribe, so there's no API key and no per-minute cost to get started).
 
 Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works for any content (talking heads, montages, tutorials, travel, interviews) without presets or menus.
 
@@ -20,7 +20,7 @@ Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works
 
 ## How this fork differs from upstream
 
-| | upstream (`browser-use/video-use`) | this fork (`video-use-local`) |
+| | upstream (`browser-use/video-use`) | this fork (`serious-ai-video-edit`) |
 |---|---|---|
 | Transcription | ElevenLabs Scribe, always | Local Whisper by default (`--engine local`), free, no key |
 | Speaker diarization / audio events | Yes, always | Only with `--engine scribe` (opt-in) |
@@ -36,7 +36,7 @@ Everything else (cutting, grading, subtitles, animations, self-eval) is unchange
 Paste into Claude Code, Codex, Hermes, Openclaw, or any agent with shell access:
 
 ```text
-Set up https://github.com/serious-ai/video-use-local for me.
+Set up https://github.com/serious-ai/serious-ai-video-edit for me.
 
 Read install.md first to install this repo and wire up ffmpeg, then register the skill with whichever agent you're running under. Transcription is local and free by default. No API key needed. Then read SKILL.md for daily usage, and always read helpers/ because that's where the editing scripts live. After install, don't transcribe anything on your own, just tell me it's ready and wait for me to drop footage into a folder.
 ```
@@ -62,13 +62,13 @@ If you'd rather do it by hand:
 
 ```bash
 # 1. Clone and symlink into your agent's skills directory
-git clone https://github.com/serious-ai/video-use-local ~/Developer/video-use-local
-ln -sfn ~/Developer/video-use-local ~/.claude/skills/video-use-local        # Claude Code
-# ln -sfn ~/Developer/video-use-local ~/.codex/skills/video-use-local       # Codex
+git clone https://github.com/serious-ai/serious-ai-video-edit ~/Developer/serious-ai-video-edit
+ln -sfn ~/Developer/serious-ai-video-edit ~/.claude/skills/serious-ai-video-edit        # Claude Code
+# ln -sfn ~/Developer/serious-ai-video-edit ~/.codex/skills/serious-ai-video-edit       # Codex
 
 # 2. Install deps (macOS: system Python is too old, and Homebrew's is
 #    externally-managed, so use a venv, see install.md for the full version)
-cd ~/Developer/video-use-local
+cd ~/Developer/serious-ai-video-edit
 python3.12 -m venv .venv && .venv/bin/pip install -e .   # or: uv sync
 brew install ffmpeg             # required
 brew install yt-dlp             # optional, for downloading online sources
@@ -124,4 +124,4 @@ See [`SKILL.md`](./SKILL.md) for the full production rules and editing craft.
 
 ## Credits & license
 
-All editing logic, hard rules, and craft come from [browser-use/video-use](https://github.com/browser-use/video-use). This fork only swaps the default transcription engine. MIT licensed (see `LICENSE`); if this fork is useful to you, consider starring the original too.
+Maintained by [Serious AI](https://github.com/serious-ai). All editing logic, hard rules, and craft come from [browser-use/video-use](https://github.com/browser-use/video-use). This fork only swaps the default transcription engine. MIT licensed (see `LICENSE`); if this fork is useful to you, consider starring the original too.

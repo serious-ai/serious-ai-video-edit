@@ -1,9 +1,9 @@
 ---
-name: video-use-local
+name: serious-ai-video-edit
 description: Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles — for talking heads, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom.
 ---
 
-# Video Use
+# Serious AI Video Edit
 
 ## Principle
 
@@ -30,13 +30,13 @@ These are the things where deviation produces silent failures or broken output. 
 9. **Cache transcripts per source.** Never re-transcribe unless the source file itself changed.
 10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
-12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the `video-use-local/` project directory.
+12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the `serious-ai-video-edit/` project directory.
 
 Everything else in this document is a worked example. Deviate whenever the material calls for it.
 
 ## Directory layout
 
-The skill lives in `video-use-local/`. User footage lives wherever they put it. All session outputs go into `<videos_dir>/edit/`.
+The skill lives in `serious-ai-video-edit/`. User footage lives wherever they put it. All session outputs go into `<videos_dir>/edit/`.
 
 ```
 <videos_dir>/
@@ -64,10 +64,10 @@ First-time install lives in `install.md` (clone, deps, ffmpeg, skill registratio
 - Python deps installed (`uv sync` or `pip install -e .` inside the repo).
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.
 - `yt-dlp`, HyperFrames, Remotion, Manim installed only on first use.
-- First-use animation setup happens inside the slot directory, never at the video-use-local repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
+- First-use animation setup happens inside the slot directory, never at the serious-ai-video-edit repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
 - This skill vendors `skills/manim-video/`. Read its SKILL.md when building a Manim slot.
 
-Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file. The skill is typically symlinked at `~/.claude/skills/video-use-local/` or `~/.codex/skills/video-use-local/`.
+Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file. The skill is typically symlinked at `~/.claude/skills/serious-ai-video-edit/` or `~/.codex/skills/serious-ai-video-edit/`.
 
 ## Helpers
 

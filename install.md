@@ -1,9 +1,9 @@
 ---
-name: video-use-local-install
-description: Install video-use-local into the current agent (Claude Code, Codex, Hermes, Openclaw, etc.) and wire up ffmpeg so the user can start editing immediately, free, with no API key required.
+name: serious-ai-video-edit-install
+description: Install serious-ai-video-edit into the current agent (Claude Code, Codex, Hermes, Openclaw, etc.) and wire up ffmpeg so the user can start editing immediately, free, with no API key required.
 ---
 
-# video-use-local install
+# serious-ai-video-edit install
 
 Use this file only for first-time install or reconnect. For daily editing, read `SKILL.md`. Always read `helpers/`, that's where the scripts live.
 
@@ -45,11 +45,11 @@ INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 - **Otherwise**, clone it fresh to a stable path (not `/tmp`, not `~/Downloads`):
 
     ```bash
-    test -d ~/Developer/video-use-local || git clone https://github.com/serious-ai/video-use-local ~/Developer/video-use-local
-    cd ~/Developer/video-use-local
+    test -d ~/Developer/serious-ai-video-edit || git clone https://github.com/serious-ai/serious-ai-video-edit ~/Developer/serious-ai-video-edit
+    cd ~/Developer/serious-ai-video-edit
     ```
 
-    If it's already there, `git pull --ff-only` and continue. From here on, `$INSTALL_DIR` = `~/Developer/video-use-local`.
+    If it's already there, `git pull --ff-only` and continue. From here on, `$INSTALL_DIR` = `~/Developer/serious-ai-video-edit`.
 
 ### 2. Install Python deps
 
@@ -99,17 +99,17 @@ Otherwise, figure out which agent you're running under and register once. A syml
 
     ```bash
     mkdir -p ~/.claude/skills
-    ln -sfn "$INSTALL_DIR" ~/.claude/skills/video-use-local
+    ln -sfn "$INSTALL_DIR" ~/.claude/skills/serious-ai-video-edit
     ```
 
 - **Codex** (`$CODEX_HOME` set, or `~/.codex/` present):
 
     ```bash
     mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
-    ln -sfn "$INSTALL_DIR" "${CODEX_HOME:-$HOME/.codex}/skills/video-use-local"
+    ln -sfn "$INSTALL_DIR" "${CODEX_HOME:-$HOME/.codex}/skills/serious-ai-video-edit"
     ```
 
-- **Hermes / Openclaw / another agent with a skills directory**: symlink `$INSTALL_DIR` into that agent's skills directory under the name `video-use-local`. If the agent has no skills directory, add a line to its system prompt / config pointing at `$INSTALL_DIR/SKILL.md` (e.g. an `@$INSTALL_DIR/SKILL.md` import in a `CLAUDE.md`-equivalent).
+- **Hermes / Openclaw / another agent with a skills directory**: symlink `$INSTALL_DIR` into that agent's skills directory under the name `serious-ai-video-edit`. If the agent has no skills directory, add a line to its system prompt / config pointing at `$INSTALL_DIR/SKILL.md` (e.g. an `@$INSTALL_DIR/SKILL.md` import in a `CLAUDE.md`-equivalent).
 
 If you can't tell which agent you're in, ask the user once: "which agent am I running under, Claude Code, Codex, or something else?" Then pick the right target.
 
