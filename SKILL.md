@@ -66,6 +66,9 @@ First-time install lives in `install.md` (clone, deps, ffmpeg, skill registratio
 - `yt-dlp`, HyperFrames, Remotion, Manim installed only on first use.
 - First-use animation setup happens inside the slot directory, never at the serious-ai-video-edit repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
 - This skill vendors `skills/manim-video/`. Read its SKILL.md when building a Manim slot.
+- **`drawtext` needs the full ffmpeg build.** Homebrew's default `ffmpeg` formula ships without `drawtext` support; install the full-featured build (`ffmpeg-full` or equivalent for your platform) before attempting burned-in clocks, timers, or captions via `drawtext`.
+- **`boxblur` has hard radius caps** (luma 14, chroma lower). A larger value fails silently rather than erroring, clamp explicitly rather than guessing a number that "should" work.
+- **Font paths with spaces can break `drawtext`'s filter-string parsing** (a Google Drive path is a common culprit). Copy the font file to a local scratch path without spaces if `drawtext` misbehaves for no obvious reason.
 
 Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file. The skill is typically symlinked at `~/.claude/skills/serious-ai-video-edit/` or `~/.codex/skills/serious-ai-video-edit/`.
 
@@ -109,6 +112,19 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 - **Silence gaps are cut candidates.** Silences ≥400ms are usually the cleanest. 150–400ms phrase boundaries are usable with a visual check. <150ms is unsafe (mid-phrase).
 - **Example cut padding** (the launch video shipped with this): 50ms before the first kept word, 80ms after the last. Tighter for montage energy, looser for documentary. Stay in the 30–200ms working window (Hard Rule 7).
 - **Never reason audio and video independently.** Every cut must work on both tracks.
+
+## Long-form sources & verification
+
+Hard-won lessons from editing long single-take sources (screen recordings, demos, interviews over ~20 minutes) where a mistake costs a full re-render cycle, not a quick fix. These are the class of bug that looks fine in isolation and only shows up when you check the actual output.
+
+- **Validate source continuity before building anything on top of it.** If the source has a visible ground-truth timer (a screen-recorder's own timestamp, a stopwatch, another app's clock), sample it at several points across the file and confirm the offset between video position and displayed time stays constant. A growing offset means the file was auto-edited (fillers or silences already stripped) and isn't wall-clock-continuous, any burned clock or cut point built on it will be wrong no matter how carefully applied. A small constant residual (1-2s) is normal; a growing one means stop and get a truly continuous source before proceeding.
+- **Long transcripts drift.** Transcribing a 20+ minute file in one pass can drift progressively (observed case: an error growing from ~11s to over 20s across a 60-minute file). When deriving cut points on a long single-take source, re-transcribe in ~5-minute chunks with a known, added offset per chunk so drift can't accumulate.
+- **Silence isn't punctuation.** Don't trust a coarse silence-gap threshold as a word or sentence boundary, a half-second breath can get treated as a full pause and clip into real speech. When a specific cut needs precision, re-run silence detection at a finer threshold within a short window around the target to find the true inter-word gap.
+- **Verify every cut boundary against the rendered output, not just the source transcript.** Rendering and re-encoding can introduce their own drift independent of the transcript's. Transcribe the actual rendered segment to confirm it starts and ends on the intended words before calling a cut done.
+- **A burned clock or timer must support a freeze landing mid-segment**, not only at segment boundaries, otherwise it can run straight through the true freeze point and then snap backward at the next segment cut: a visible, credibility-destroying bug. Verify by sampling the displayed value densely across the transition and confirming it never decreases.
+- **Check the whole cut timeline for contiguity**, not just individual boundaries: every kept or ramped segment should start exactly where the previous one ended in source time. This single check catches dropped material and clock/pacing bugs together, worth running as a standing step on any multi-segment edit.
+- **Diagnose "missing audio" by transcribing the assembled file, never by ear-scrubbing a sped-up preview.** Fast-scrub playback in common players (QuickTime included) can silently suppress audio, making a fully-covered section sound silent when it isn't.
+- **Redact PII with wide, always-on bands, not fixed-position boxes**, on any screen recording where a sidebar or panel can scroll or move. A position-tracked or static box lets sensitive content (owner names, addresses, anything personally identifying, not just the presenter's own) drift in and out of frame uncovered.
 
 ## The packed transcript (primary reading view)
 
@@ -290,6 +306,11 @@ Match the source unless the user asked for something specific. Common targets: `
 
 `grade` is a preset name or raw ffmpeg filter. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
 
+## Publishing (when the user is about to upload)
+
+- **A fresh YouTube upload often defaults to 360p (Auto) for a day or more**, even once 1080p exists, because YouTube's transcode ladder finishes low resolutions first and browsers' Auto-quality picker prefers whatever's ready. Don't re-upload to "fix" this, it restarts transcoding and issues a new video ID, breaking any embed already wired to the old one. It resolves on its own; tell the user viewers can select 1080p manually from the gear icon in the meantime.
+- **Embedded player width affects auto-quality too.** A narrow embed (under roughly 1000px rendered width) gives YouTube a legitimate reason to serve 720p or lower even once the file's fully processed. Widen the embed container if this matters for the delivery.
+
 ## Memory — `project.md`
 
 Append one section per session at `<edit>/project.md`:
@@ -322,3 +343,7 @@ Things that consistently fail regardless of style:
 - **Editing before confirming the strategy.** Never.
 - **Re-transcribing cached sources.** Immutable outputs of immutable inputs.
 - **Assuming what kind of video it is.** Look first, ask second, edit last.
+- **Trusting a silence gap as a word or sentence boundary at a coarse threshold.** Verify against the raw audio at fine resolution when a specific cut needs precision.
+- **Trusting a derived signal (transcript timestamp, segment start time) over ground truth.** Re-verify against the rendered output or raw source before shipping a cut, clock, or overlay.
+- **Dropping footage to shorten a cut instead of speeding through it**, especially proof-heavy or evidentiary material. If it needs to be shorter, ramp the speed up; don't remove it outright.
+- **Building a burned clock or overlay on an unverified source.** Confirm the source is wall-clock-continuous (constant offset from any visible ground-truth timer) before deriving anything from its timeline.
