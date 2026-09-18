@@ -4,7 +4,7 @@
 
 # Serious AI Video Edit
 
-By [Serious AI](https://github.com/serious-ai). Edit videos with Claude Code, by conversation. **A community fork of [browser-use/video-use](https://github.com/browser-use/video-use)** (same editor, but transcription defaults to a free, on-device Whisper model instead of ElevenLabs Scribe, so there's no API key and no per-minute cost to get started).
+By [Chris Duff, M.D.](https://seriousai.partners/about/) at [Serious AI Partners](https://seriousai.partners). Edit videos with Claude Code, by conversation. **A community fork of [browser-use/video-use](https://github.com/browser-use/video-use)** (same editor, but transcription defaults to a free, on-device Whisper model instead of ElevenLabs Scribe, so there's no API key and no per-minute cost to get started).
 
 Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works for any content (talking heads, montages, tutorials, travel, interviews) without presets or menus.
 
@@ -27,7 +27,7 @@ Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works
 | Cost to try it | ~330 ElevenLabs credits/min of footage | $0 |
 | Setup | Needs an ElevenLabs API key on day one | No key needed to start editing |
 
-**One honest tradeoff:** local Whisper's training data is mostly clean captions, so out of the box it tends to "clean up" `um`/`uh`/false starts instead of transcribing them verbatim, which matters if you lean hard on automatic filler-word cutting. This fork mitigates that with a verbatim-priming prompt (recovers most of it, not all, measured ~75% in testing). If you're cutting something where every "um" needs to be caught, either spot-check the transcript against the source, or ask your agent to use `--engine scribe` for that project instead. The option is still there, you just don't need it to get started.
+**One tradeoff to know about:** local Whisper's training data is mostly clean captions, so out of the box it tends to "clean up" `um`/`uh`/false starts instead of transcribing them verbatim, which matters if you lean hard on automatic filler-word cutting. This fork mitigates that with a verbatim-priming prompt (recovers most of it, not all, measured ~75% in testing). If you're cutting something where every "um" needs to be caught, either spot-check the transcript against the source, or ask your agent to use `--engine scribe` for that project instead. The option is still there, you just don't need it to get started.
 
 Everything else (cutting, grading, subtitles, animations, self-eval) is unchanged from upstream.
 
@@ -125,3 +125,15 @@ See [`SKILL.md`](./SKILL.md) for the full production rules and editing craft.
 ## Credits & license
 
 Maintained by [Serious AI](https://github.com/serious-ai). All editing logic, hard rules, and craft come from [browser-use/video-use](https://github.com/browser-use/video-use). This fork only swaps the default transcription engine. MIT licensed (see `LICENSE`); if this fork is useful to you, consider starring the original too.
+
+---
+
+## Who built this
+
+[Chris Duff, M.D.](https://seriousai.partners/about/), Serious AI Partners. Fractional Head of AI and fractional CTO for operators who carry real financial consequence when a decision goes wrong.
+
+10+ years directing engineering teams since 2015, and over $6.5M funded and realized in a land investment firm with his own capital at title. That is where the verification habit in these tools comes from. These tools are wrong often, and a wrong answer reads exactly like a right one, so the checking has to sit where a person still signs off.
+
+Built for real weekly video work rather than as a demo.
+
+[seriousai.partners](https://seriousai.partners)
