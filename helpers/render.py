@@ -240,8 +240,14 @@ def extract_segment(
     preview: bool = False,
     draft: bool = False,
     rate: str | None = None,
+    native: bool = False,
 ) -> None:
     """Extract a cut range as its own MP4 with grade + 30ms audio fades baked in.
+
+    native=True keeps the source resolution (no scale) and encodes with the
+    VideoToolbox hardware H.264 encoder at a YouTube 4K bitrate. Added 2026-09-24
+    for podcast masters, which must stay 3840x2160: the default ladder below
+    always scales to 1080p.
 
     `-ss` before `-i` for fast accurate seeking. Scale to 1080p from 4K.
     Portrait sources (height > width) are scaled by height to preserve orientation.
@@ -254,7 +260,9 @@ def extract_segment(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     portrait = is_portrait_source(source)
-    if draft:
+    if native:
+        scale = ""
+    elif draft:
         scale = "scale=-2:1280" if portrait else "scale=1280:-2"
     else:
         scale = "scale=-2:1920" if portrait else "scale=1920:-2"
@@ -262,10 +270,11 @@ def extract_segment(
     vf_parts: list[str] = []
     if is_hdr_source(source):
         vf_parts.append(TONEMAP_CHAIN)
-    vf_parts.append(scale)
+    if scale:
+        vf_parts.append(scale)
     if grade_filter:
         vf_parts.append(grade_filter)
-    vf = ",".join(vf_parts)
+    vf = ",".join(vf_parts) or "null"
 
     # 30ms audio fades at both edges (Rule 3) — prevent pops
     fade_out_start = max(0.0, duration - 0.03)
@@ -291,7 +300,9 @@ def extract_segment(
         "-t", f"{duration:.3f}",
         "-vf", vf,
         "-af", af,
-        "-c:v", "libx264", "-preset", preset, "-crf", crf,
+        *(["-c:v", "h264_videotoolbox", "-b:v", "45M", "-maxrate", "60M",
+            "-bufsize", "90M", "-profile:v", "high"] if native else
+          ["-c:v", "libx264", "-preset", preset, "-crf", crf]),
         "-pix_fmt", "yuv420p", "-r", out_rate,
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",
@@ -306,6 +317,7 @@ def extract_all_segments(
     preview: bool,
     draft: bool = False,
     fps: str | None = None,
+    native: bool = False,
 ) -> list[Path]:
     """Extract every EDL range into edit_dir/clips_graded/seg_NN.mp4.
     Returns the ordered list of segment paths.
@@ -359,7 +371,7 @@ def extract_all_segments(
         print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  {note}")
         if is_auto:
             print(f"        grade: {seg_filter or '(none)'}")
-        extract_segment(src_path, start, duration, seg_filter, out_path, preview=preview, draft=draft, rate=out_rate)
+        extract_segment(src_path, start, duration, seg_filter, out_path, preview=preview, draft=draft, rate=out_rate, native=native)
         seg_paths.append(out_path)
 
     return seg_paths
@@ -706,6 +718,12 @@ def main() -> None:
         help="Skip audio loudness normalization. Default is on (-14 LUFS, -1 dBTP, LRA 11).",
     )
     ap.add_argument(
+        "--native",
+        action="store_true",
+        help="Keep the source resolution (e.g. 4K) and encode with VideoToolbox H.264 "
+             "at 45 Mbps. Use for podcast masters; the default ladder scales to 1080p.",
+    )
+    ap.add_argument(
         "--fps",
         type=parse_fps,
         default=None,
@@ -725,7 +743,8 @@ def main() -> None:
 
     # 1. Extract per-segment (auto-grade per range if EDL grade is "auto")
     segment_paths = extract_all_segments(
-        edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps
+        edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps,
+        native=args.native,
     )
 
     # 2. Concat → base
