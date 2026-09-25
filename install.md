@@ -166,7 +166,7 @@ Tell the user, in one short message:
 
 - Where the skill is installed (`$INSTALL_DIR`).
 - That transcription is local and free by default. No API key needed.
-- **One honest caveat, worth surfacing up front:** the local engine sometimes cleans up "um"/"uh" and false starts instead of keeping them verbatim (a known Whisper behavior, mitigated but not eliminated here). If they're doing heavy filler-word cutting on an important project, mention they can ask for the ElevenLabs engine instead (Step 5) for guaranteed-verbatim transcription.
+- **One caveat, worth surfacing up front:** the local engine sometimes cleans up "um"/"uh" and false starts instead of keeping them verbatim (a known Whisper behavior, mitigated but not eliminated here). If they're doing heavy filler-word cutting on an important project, mention they can ask for the ElevenLabs engine instead (Step 5) for guaranteed-verbatim transcription.
 - That they should `cd` into their footage folder and start their agent there (e.g. `claude`).
 - That a good first message is: *"edit these into a launch video"* or *"inventory these takes and propose a strategy."*
 - That all outputs land in `<videos_dir>/edit/`. The repo stays clean.
