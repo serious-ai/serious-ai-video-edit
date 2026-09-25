@@ -148,11 +148,36 @@ _VERBATIM_PROMPT = (
     "exactly as spoken, um, including false starts."
 )
 
+# Whisper has no vocabulary list, but the initial_prompt doubles as one: a name
+# spelled correctly in the prompt biases decoding toward that spelling for the
+# rest of the audio. This is the cheapest fix available for the failure every
+# branded show hits, where the ASR renders your own product names phonetically
+# and every downstream title and description inherits it.
+_VOCAB_PROMPT_MAX = 400
+
+
+def _build_initial_prompt(vocab: str | None) -> str:
+    """Verbatim priming, plus any caller-supplied proper nouns.
+
+    Whisper only attends to a short window of the prompt, so a long list
+    crowds out the verbatim priming and quietly costs you the fillers. Cap it,
+    and let the caller pick which names matter.
+    """
+    if not vocab:
+        return _VERBATIM_PROMPT
+    names = ", ".join(n.strip() for n in vocab.split(",") if n.strip())
+    if not names:
+        return _VERBATIM_PROMPT
+    if len(names) > _VOCAB_PROMPT_MAX:
+        names = names[:_VOCAB_PROMPT_MAX].rsplit(",", 1)[0]
+    return f"{_VERBATIM_PROMPT} Names used in this recording: {names}."
+
 
 def call_whisper_local(
     audio_path: Path,
     language: str | None = None,
     model_size: str = DEFAULT_WHISPER_MODEL,
+    vocab: str | None = None,
 ) -> dict:
     """Local word-level transcription via faster-whisper. Same `words` shape
     as call_scribe's response, minus diarization and audio-event tags:
@@ -168,7 +193,7 @@ def call_whisper_local(
         word_timestamps=True,
         vad_filter=False,
         condition_on_previous_text=False,
-        initial_prompt=_VERBATIM_PROMPT,
+        initial_prompt=_build_initial_prompt(vocab),
     )
 
     words: list[dict] = []
@@ -214,6 +239,7 @@ def transcribe_one(
     audio_track: int = 0,
     engine: str = DEFAULT_ENGINE,
     model_size: str = DEFAULT_WHISPER_MODEL,
+    vocab: str | None = None,
 ) -> Path:
     """Transcribe a single video. Returns path to transcript JSON.
 
@@ -264,7 +290,7 @@ def transcribe_one(
             if verbose:
                 print(f"  transcribing {video.stem}.wav ({size_mb:.1f} MB) locally "
                       f"(whisper/{model_size})", flush=True)
-            payload = call_whisper_local(audio, language, model_size)
+            payload = call_whisper_local(audio, language, model_size, vocab)
         else:
             raise ValueError(f"unknown engine {engine!r}, expected 'local' or 'scribe'")
 
@@ -324,6 +350,15 @@ def main() -> None:
              "and the mic on track 1; without this ffmpeg applies its default audio "
              "stream selection, which picks the track with the most channels.",
     )
+    ap.add_argument(
+        "--vocab",
+        default=None,
+        help="Comma-separated proper nouns to prime the local engine with, e.g. "
+             "\"Claude Code, Opus 5, Acme Robotics\". Whisper spells unfamiliar "
+             "names phonetically, and every title and description generated from "
+             "the transcript inherits the mistake. Local engine only; Scribe "
+             "ignores it.",
+    )
     args = ap.parse_args()
 
     video = args.video.resolve()
@@ -342,6 +377,7 @@ def main() -> None:
         audio_track=args.audio_track,
         engine=args.engine,
         model_size=args.model,
+        vocab=args.vocab,
     )
 
 
