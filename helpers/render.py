@@ -241,6 +241,7 @@ def extract_segment(
     draft: bool = False,
     rate: str | None = None,
     native: bool = False,
+    pre_filter: str = "",
 ) -> None:
     """Extract a cut range as its own MP4 with grade + 30ms audio fades baked in.
 
@@ -270,6 +271,8 @@ def extract_segment(
     vf_parts: list[str] = []
     if is_hdr_source(source):
         vf_parts.append(TONEMAP_CHAIN)
+    if pre_filter:
+        vf_parts.append(pre_filter)
     if scale:
         vf_parts.append(scale)
     if grade_filter:
@@ -366,12 +369,16 @@ def extract_all_segments(
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
         else:
             seg_filter = resolved
+        # Optional per-range filter (e.g. a timed privacy blur), applied before
+        # any scaling so its coordinates are source pixels. Its `t` is
+        # segment-relative, since the segment is input-seeked to `start`.
+        pre_filter = r.get("vf") or ""
 
         note = r.get("beat") or r.get("note") or ""
         print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  {note}")
         if is_auto:
             print(f"        grade: {seg_filter or '(none)'}")
-        extract_segment(src_path, start, duration, seg_filter, out_path, preview=preview, draft=draft, rate=out_rate, native=native)
+        extract_segment(src_path, start, duration, seg_filter, out_path, preview=preview, draft=draft, rate=out_rate, native=native, pre_filter=pre_filter)
         seg_paths.append(out_path)
 
     return seg_paths
