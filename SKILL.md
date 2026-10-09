@@ -306,6 +306,8 @@ Match the source unless the user asked for something specific. Common targets: `
 
 `grade` is a preset name or raw ffmpeg filter. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
 
+A range may also carry `vf`, an ffmpeg filter applied to that range only, before any scaling, so its coordinates are source pixels. Its `t` is relative to the range's own `start`. Use it for a timed privacy blur on a screen recording, for example `"vf": "split[a][b];[b]crop=1640:210:1000:1220,scale=136:18,boxblur=2:1,scale=1640:210[c];[a][c]overlay=1000:1220:enable='between(t,262.2,518.7)'"`. Sizes passed to `scale` must be even for yuv420p.
+
 ## Publishing (when the user is about to upload)
 
 - **A fresh YouTube upload often defaults to 360p (Auto) for a day or more**, even once 1080p exists, because YouTube's transcode ladder finishes low resolutions first and browsers' Auto-quality picker prefers whatever's ready. Don't re-upload to "fix" this, it restarts transcoding and issues a new video ID, breaking any embed already wired to the old one. It resolves on its own; tell the user viewers can select 1080p manually from the gear icon in the meantime.
