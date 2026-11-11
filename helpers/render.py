@@ -2,11 +2,13 @@
 
 Implements the HEURISTICS render pipeline in the correct order:
 
-  1. Per-segment extract with color grade + 30ms audio fades baked in
-  2. Lossless -c copy concat into base.mp4
-  3. If overlays or subtitles: single filter graph that overlays animations
-     (with PTS shift so frame 0 lands at the overlay window start)
-     and applies `subtitles` filter LAST → final.mp4
+  1. Per-segment video extract with color grade baked in (no audio)
+  2. Lossless -c copy concat of the video into base.mp4
+  3. ONE continuous audio track cut from the source to each segment's
+     measured video (seek point, real frame count), PCM → audio.wav
+  4. Final pass: audio.wav loudness-normalized and AAC encoded once (ADTS,
+     no priming edit list, Spotify-safe), muxed with the base video
+     (+ overlays with PTS shift, `subtitles` LAST) → final.mp4
 
 Optionally builds a master SRT from the per-source transcripts + EDL
 output-timeline offsets, applies the proven force_style (2-word
@@ -57,12 +59,6 @@ SUB_FORCE_STYLE = (
 )
 
 # -------- Helpers ------------------------------------------------------------
-
-
-def run(cmd: list[str], quiet: bool = False) -> None:
-    if not quiet:
-        print(f"  $ {' '.join(str(c) for c in cmd[:6])}{' …' if len(cmd) > 6 else ''}")
-    subprocess.run(cmd, check=True)
 
 
 def resolve_grade_filter(grade_field: str | None) -> str:
@@ -243,7 +239,11 @@ def extract_segment(
     native: bool = False,
     pre_filter: str = "",
 ) -> None:
-    """Extract a cut range as its own MP4 with grade + 30ms audio fades baked in.
+    """Extract a cut range's video as its own MP4 with the grade baked in.
+
+    No audio: the edit's audio is cut once from the source by
+    build_audio_track() to match these segments' real frame counts. Per-segment
+    AAC files drifted (see the note above build_audio_track).
 
     native=True keeps the source resolution (no scale) and encodes with the
     VideoToolbox hardware H.264 encoder at a YouTube 4K bitrate. Added 2026-09-24
@@ -279,10 +279,6 @@ def extract_segment(
         vf_parts.append(grade_filter)
     vf = ",".join(vf_parts) or "null"
 
-    # 30ms audio fades at both edges (Rule 3) — prevent pops
-    fade_out_start = max(0.0, duration - 0.03)
-    af = f"afade=t=in:st=0:d=0.03,afade=t=out:st={fade_out_start:.3f}:d=0.03"
-
     if draft:
         preset, crf = "ultrafast", "28"
     elif preview:
@@ -302,16 +298,32 @@ def extract_segment(
         "-i", str(source),
         "-t", f"{duration:.3f}",
         "-vf", vf,
-        "-af", af,
+        "-an",
         *(["-c:v", "h264_videotoolbox", "-b:v", "45M", "-maxrate", "60M",
             "-bufsize", "90M", "-profile:v", "high"] if native else
           ["-c:v", "libx264", "-preset", preset, "-crf", crf]),
         "-pix_fmt", "yuv420p", "-r", out_rate,
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",
         str(out_path),
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
+def resolve_output_rate(edl: dict, edit_dir: Path, fps: str | None = None) -> str:
+    """Resolve ONE output frame rate for the entire render.
+
+    The lossless concat (Rule 2, `-c copy`) requires all segments to share a
+    frame rate; probing per-segment would diverge for multi-source EDLs that mix
+    rates (e.g. a 30fps and a 60fps source) and break the concat. Explicit --fps
+    wins; otherwise preserve the first source's rate.
+    """
+    if fps is not None:
+        return parse_fps(str(fps))
+    ranges = edl["ranges"]
+    if ranges:
+        first_src = resolve_path(edl["sources"][ranges[0]["source"]], edit_dir)
+        return probe_source_fps(first_src) or "24"
+    return "24"
 
 
 def extract_all_segments(
@@ -338,19 +350,7 @@ def extract_all_segments(
 
     ranges = edl["ranges"]
     sources = edl["sources"]
-
-    # Resolve ONE output frame rate for the entire render and apply it to every
-    # segment. The lossless concat (Rule 2, `-c copy`) requires all segments to
-    # share a frame rate; probing per-segment would diverge for multi-source
-    # EDLs that mix rates (e.g. a 30fps and a 60fps source) and break the concat.
-    # Explicit --fps wins; otherwise preserve the first source's rate.
-    if fps is not None:
-        out_rate = parse_fps(str(fps))
-    elif ranges:
-        first_src = resolve_path(sources[ranges[0]["source"]], edit_dir)
-        out_rate = probe_source_fps(first_src) or "24"
-    else:
-        out_rate = "24"
+    out_rate = resolve_output_rate(edl, edit_dir, fps)
 
     seg_paths: list[Path] = []
     print(f"extracting {len(ranges)} segment(s) → {clips_dir.name}/  @ {out_rate} fps"
@@ -404,6 +404,92 @@ def concat_segments(segment_paths: list[Path], out_path: Path, edit_dir: Path) -
     print(f"concat → {out_path.name}")
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     concat_list.unlink(missing_ok=True)
+
+
+# -------- Continuous audio track ---------------------------------------------
+#
+# Why (Ep 333, November 11, 2026): each range used to be encoded as its own AAC
+# file and joined with `-c copy`. Every segment then carried its own encoder
+# priming/padding and every video segment rounded to whole frames on its own,
+# so over 35 segments the audio slid off the picture (+26 ms at 0:33,
+# +165 ms at 13:31) and Spotify flagged the episode. A hand rebuild that timed
+# each range as frames/30 kept the same drift, because the source averaged
+# 29.995 fps and the video was encoded at that rate.
+#
+# So the audio is cut from the source ONCE, to each segment's measured video:
+# it starts where the segment's picture starts and lasts exactly
+# real frames / output rate. It stays PCM until the final pass encodes it once.
+
+
+def probe_video_frames(path: Path) -> int:
+    """Real number of video frames in a file (demux-only packet count)."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+         "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    return int(out.stdout.strip().split(",")[0])
+
+
+def segment_timeline(
+    edl: dict, edit_dir: Path, seg_paths: list[Path], rate: str
+) -> list[dict]:
+    """Measure what each rendered segment's video actually covers in its source.
+
+    Returns one dict per range: source path, raw_start, frames (real count) and
+    duration (frames / rate, exact). raw_start is the `-ss` time extract_segment
+    used, not the first source frame after it: `-r` fills output frame j with
+    the source frame nearest start + j/rate (repeating the first frame when it
+    lands more than half a frame late), so the picture is anchored at the seek
+    point. Checked frame by frame against the source on Nov 11, 2026.
+    """
+    fr = Fraction(rate)
+    timeline: list[dict] = []
+    for r, seg in zip(edl["ranges"], seg_paths):
+        src = resolve_path(edl["sources"][r["source"]], edit_dir)
+        frames = probe_video_frames(seg)
+        timeline.append({
+            "source": str(src),
+            "raw_start": round(float(r["start"]), 3),  # the -ss extract_segment passes
+            "frames": frames,
+            "duration": float(frames / fr),
+        })
+    return timeline
+
+
+def build_audio_track(timeline: list[dict], out_path: Path) -> None:
+    """Cut every range from its source in ONE filter graph → continuous PCM WAV.
+
+    10 ms fades at each edge prevent clicks at the joins without shifting time.
+    """
+    sources = list(dict.fromkeys(t["source"] for t in timeline))
+    inputs: list[str] = []
+    for s in sources:
+        inputs += ["-i", s]
+    parts: list[str] = []
+    for i, t in enumerate(timeline):
+        k = sources.index(t["source"])
+        d = t["duration"]
+        chain = (
+            f"[{k}:a]atrim=start={t['raw_start']:.6f}:duration={d:.6f},"
+            "asetpts=PTS-STARTPTS,"
+            "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+        )
+        if d > 0.05:
+            chain += (f",afade=t=in:st=0:d=0.01"
+                      f",afade=t=out:st={d - 0.01:.6f}:d=0.01")
+        parts.append(f"{chain}[a{i}]")
+    labels = "".join(f"[a{i}]" for i in range(len(timeline)))
+    parts.append(f"{labels}concat=n={len(timeline)}:v=0:a=1[out]")
+    cmd = [
+        "ffmpeg", "-y", *inputs,
+        "-filter_complex", ";".join(parts),
+        "-map", "[out]", "-c:a", "pcm_s24le", "-rf64", "auto",
+        str(out_path),
+    ]
+    total = sum(t["duration"] for t in timeline)
+    print(f"audio → {out_path.name} (one track, {len(timeline)} ranges, {total:.3f}s)")
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
 # -------- Master SRT (Rule 5) ------------------------------------------------
@@ -551,47 +637,26 @@ def measure_loudness(video_path: Path) -> dict[str, str] | None:
     return data
 
 
-def apply_loudnorm_two_pass(
-    input_path: Path,
-    output_path: Path,
-    preview: bool = False,
-) -> bool:
-    """Run two-pass loudnorm on input_path, write normalized copy to output_path.
+def loudnorm_filter(audio_path: Path, one_pass: bool = False) -> str:
+    """Return the loudnorm filter for the final (only) audio encode.
 
-    Returns True on success, False if measurement failed (caller should fall
-    back to copying the input unchanged).
-
-    In preview mode, skips the measurement pass and uses a one-pass approximation
-    for speed. Final mode always does the proper two-pass.
+    Two-pass by default: measure audio_path, then return a linear filter set
+    from the measurement. one_pass (draft renders, or a failed measurement)
+    returns the dynamic single-pass approximation.
     """
-    if preview:
-        # One-pass approximation — faster, slightly less accurate.
-        filter_str = f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}"
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-nostats",
-            "-i", str(input_path),
-            "-c:v", "copy",
-            "-af", filter_str,
-            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-movflags", "+faststart",
-            str(output_path),
-        ]
-        print(f"  loudnorm (1-pass preview) → {output_path.name}")
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        return True
-
-    # Full two-pass
-    print(f"  loudnorm pass 1: measuring {input_path.name}")
-    measurement = measure_loudness(input_path)
+    one = f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}"
+    if one_pass:
+        print("  loudnorm: 1-pass")
+        return one
+    print(f"  loudnorm pass 1: measuring {audio_path.name}")
+    measurement = measure_loudness(audio_path)
     if measurement is None:
-        print("  loudnorm measurement failed — falling back to 1-pass")
-        return apply_loudnorm_two_pass(input_path, output_path, preview=True)
-
+        print("  loudnorm measurement failed, falling back to 1-pass")
+        return one
     print(f"    measured: I={measurement['input_i']} LUFS  "
           f"TP={measurement['input_tp']}  LRA={measurement['input_lra']}")
-
-    filter_str = (
-        f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}"
+    return (
+        f"{one}"
         f":measured_I={measurement['input_i']}"
         f":measured_TP={measurement['input_tp']}"
         f":measured_LRA={measurement['input_lra']}"
@@ -599,46 +664,88 @@ def apply_loudnorm_two_pass(
         f":offset={measurement['target_offset']}"
         f":linear=true"
     )
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-nostats",
-        "-i", str(input_path),
-        "-c:v", "copy",
-        "-af", filter_str,
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
-    print(f"  loudnorm pass 2: normalizing → {output_path.name}")
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    return True
 
 
 # -------- Final compositing (Rule 1 + Rule 4) -------------------------------
 
 
+# Spotify-safe audio packaging (Ep 333, November 11, 2026). Spotify for
+# Creators accepted an AAC track with no priming edit list (initial_padding 0,
+# every frame stereo, audio length within a frame or two of the video). The
+# native `aac` encoder writes 1024 samples of lead-in, so the track is trimmed
+# by exactly that much first, encoded once to ADTS (which carries no edit list)
+# and stream-copied into the MP4. A decoder then plays the lead-in in place of
+# the trimmed samples and speech stays on the picture. One file serves YouTube
+# and Spotify with no re-encode afterwards.
+AAC_ENCODER_DELAY = 1024
+
+
+def video_end_time(path: Path) -> float:
+    """End of the video stream (start_time + duration), in seconds."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=start_time,duration", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    st = json.loads(out.stdout)["streams"][0]
+    return float(st.get("start_time") or 0) + float(st["duration"])
+
+
+def encode_audio_adts(
+    audio_path: Path, out_path: Path, video_end: float, audio_filter: str | None = None
+) -> None:
+    """The one AAC encode: trim the encoder delay, optional loudnorm, pad to the video."""
+    chain = [f"atrim=start_sample={AAC_ENCODER_DELAY}", "asetpts=PTS-STARTPTS"]
+    if audio_filter:
+        chain.append(audio_filter)
+    chain += ["aresample=48000", f"apad=whole_dur={video_end:.6f}"]
+    cmd = [
+        "ffmpeg", "-y", "-i", str(audio_path),
+        "-af", ",".join(chain),
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
+        "-f", "adts", str(out_path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
 def build_final_composite(
     base_path: Path,
+    audio_path: Path,
     overlays: list[dict],
     subtitles_path: Path | None,
     out_path: Path,
     edit_dir: Path,
+    audio_filter: str | None = None,
 ) -> None:
-    """Final pass: base → overlays (PTS-shifted) → subtitles LAST → out.
+    """Final pass: base → overlays (PTS-shifted) → subtitles LAST → out,
+    muxed with the continuous audio track, encoded to AAC once and packaged so
+    Spotify and YouTube both take the file as is (see AAC_ENCODER_DELAY).
 
-    If there are no overlays and no subtitles, just copy base to out.
+    If there are no overlays and no subtitles, the video is stream-copied.
     """
     has_overlays = bool(overlays)
     has_subs = subtitles_path is not None and subtitles_path.exists()
 
+    aac_path = audio_path.with_suffix(".aac")
+    encode_audio_adts(audio_path, aac_path, video_end_time(base_path), audio_filter)
+    audio_idx = 1 + len(overlays)
+    audio_args = ["-map", f"{audio_idx}:a:0", "-c:a", "copy"]
+
     if not has_overlays and not has_subs:
-        # Nothing to do — just rename/copy base to final name
-        run(["ffmpeg", "-y", "-i", str(base_path), "-c", "copy", str(out_path)], quiet=True)
+        cmd = [
+            "ffmpeg", "-y", "-i", str(base_path), "-i", str(aac_path),
+            "-map", "0:v:0", "-c:v", "copy", *audio_args,
+            "-movflags", "+faststart", str(out_path),
+        ]
+        print(f"mux → {out_path.name} (video copy, one AAC encode, ADTS packaging)")
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return
 
     inputs: list[str] = ["-i", str(base_path)]
     for ov in overlays:
         ov_path = resolve_path(ov["file"], edit_dir)
         inputs += ["-i", str(ov_path)]
+    inputs += ["-i", str(aac_path)]
 
     filter_parts: list[str] = []
     # PTS-shift every overlay so its frame 0 lands at start_in_output
@@ -680,10 +787,9 @@ def build_final_composite(
         *inputs,
         "-filter_complex", filter_complex,
         "-map", out_label,
-        "-map", "0:a",
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
         "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
+        *audio_args,
         "-movflags", "+faststart",
         str(out_path),
     ]
@@ -764,7 +870,13 @@ def main() -> None:
     base_path = edit_dir / base_name
     concat_segments(segment_paths, base_path, edit_dir)
 
-    # 3. Subtitles: build if requested, resolve final path
+    # 3. One continuous audio track, cut to the segments' measured video
+    rate = resolve_output_rate(edl, edit_dir, args.fps)
+    timeline = segment_timeline(edl, edit_dir, segment_paths, rate)
+    audio_path = base_path.with_name(base_name.replace("base", "audio").replace(".mp4", ".wav"))
+    build_audio_track(timeline, audio_path)
+
+    # 4. Subtitles: build if requested, resolve final path
     subs_path: Path | None = None
     if not args.no_subtitles:
         if args.build_subtitles:
@@ -776,18 +888,16 @@ def main() -> None:
                 print(f"warning: subtitles path in EDL does not exist: {subs_path}")
                 subs_path = None
 
-    # 4. Composite (overlays + subtitles LAST) → intermediate (pre-loudnorm) path
+    # 5. Composite (overlays + subtitles LAST) + the one AAC encode → final
     overlays = edl.get("overlays") or []
-    if args.no_loudnorm:
-        # Composite directly to final output
-        build_final_composite(base_path, overlays, subs_path, out_path, edit_dir)
-    else:
-        # Composite to a temp file, then run loudnorm → final output
-        tmp_composite = out_path.with_suffix(".prenorm.mp4")
-        build_final_composite(base_path, overlays, subs_path, tmp_composite, edit_dir)
+    audio_filter = None
+    if not args.no_loudnorm:
         print("loudness normalization → social-ready (-14 LUFS / -1 dBTP / LRA 11)")
-        apply_loudnorm_two_pass(tmp_composite, out_path, preview=args.draft)
-        tmp_composite.unlink(missing_ok=True)
+        audio_filter = loudnorm_filter(audio_path, one_pass=args.draft)
+    build_final_composite(
+        base_path, audio_path, overlays, subs_path, out_path, edit_dir,
+        audio_filter=audio_filter,
+    )
 
     size_mb = out_path.stat().st_size / (1024 * 1024)
     print(f"\ndone: {out_path} ({size_mb:.1f} MB)")
