@@ -6,8 +6,9 @@ Implements the HEURISTICS render pipeline in the correct order:
   2. Lossless -c copy concat of the video into base.mp4
   3. ONE continuous audio track cut from the source to each segment's
      measured video (seek point, real frame count), PCM → audio.wav
-  4. Final pass: base video (+ overlays with PTS shift, `subtitles` LAST)
-     muxed with audio.wav, loudness-normalized, AAC encoded once → final.mp4
+  4. Final pass: audio.wav loudness-normalized and AAC encoded once (ADTS,
+     no priming edit list, Spotify-safe), muxed with the base video
+     (+ overlays with PTS shift, `subtitles` LAST) → final.mp4
 
 Optionally builds a master SRT from the per-source transcripts + EDL
 output-timeline offsets, applies the proven force_style (2-word
@@ -668,6 +669,45 @@ def loudnorm_filter(audio_path: Path, one_pass: bool = False) -> str:
 # -------- Final compositing (Rule 1 + Rule 4) -------------------------------
 
 
+# Spotify-safe audio packaging (Ep 333, November 11, 2026). Spotify for
+# Creators accepted an AAC track with no priming edit list (initial_padding 0,
+# every frame stereo, audio length within a frame or two of the video). The
+# native `aac` encoder writes 1024 samples of lead-in, so the track is trimmed
+# by exactly that much first, encoded once to ADTS (which carries no edit list)
+# and stream-copied into the MP4. A decoder then plays the lead-in in place of
+# the trimmed samples and speech stays on the picture. One file serves YouTube
+# and Spotify with no re-encode afterwards.
+AAC_ENCODER_DELAY = 1024
+
+
+def video_end_time(path: Path) -> float:
+    """End of the video stream (start_time + duration), in seconds."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=start_time,duration", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    st = json.loads(out.stdout)["streams"][0]
+    return float(st.get("start_time") or 0) + float(st["duration"])
+
+
+def encode_audio_adts(
+    audio_path: Path, out_path: Path, video_end: float, audio_filter: str | None = None
+) -> None:
+    """The one AAC encode: trim the encoder delay, optional loudnorm, pad to the video."""
+    chain = [f"atrim=start_sample={AAC_ENCODER_DELAY}", "asetpts=PTS-STARTPTS"]
+    if audio_filter:
+        chain.append(audio_filter)
+    chain += ["aresample=48000", f"apad=whole_dur={video_end:.6f}"]
+    cmd = [
+        "ffmpeg", "-y", "-i", str(audio_path),
+        "-af", ",".join(chain),
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
+        "-f", "adts", str(out_path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
 def build_final_composite(
     base_path: Path,
     audio_path: Path,
@@ -678,27 +718,26 @@ def build_final_composite(
     audio_filter: str | None = None,
 ) -> None:
     """Final pass: base → overlays (PTS-shifted) → subtitles LAST → out,
-    muxed with the continuous audio track, which is encoded to AAC here once.
+    muxed with the continuous audio track, encoded to AAC once and packaged so
+    Spotify and YouTube both take the file as is (see AAC_ENCODER_DELAY).
 
     If there are no overlays and no subtitles, the video is stream-copied.
     """
     has_overlays = bool(overlays)
     has_subs = subtitles_path is not None and subtitles_path.exists()
 
+    aac_path = audio_path.with_suffix(".aac")
+    encode_audio_adts(audio_path, aac_path, video_end_time(base_path), audio_filter)
     audio_idx = 1 + len(overlays)
-    audio_args = [
-        "-map", f"{audio_idx}:a",
-        *(["-af", audio_filter] if audio_filter else []),
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-    ]
+    audio_args = ["-map", f"{audio_idx}:a:0", "-c:a", "copy"]
 
     if not has_overlays and not has_subs:
         cmd = [
-            "ffmpeg", "-y", "-i", str(base_path), "-i", str(audio_path),
-            "-map", "0:v", "-c:v", "copy", *audio_args,
+            "ffmpeg", "-y", "-i", str(base_path), "-i", str(aac_path),
+            "-map", "0:v:0", "-c:v", "copy", *audio_args,
             "-movflags", "+faststart", str(out_path),
         ]
-        print(f"mux → {out_path.name} (video copy, one AAC encode)")
+        print(f"mux → {out_path.name} (video copy, one AAC encode, ADTS packaging)")
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return
 
@@ -706,7 +745,7 @@ def build_final_composite(
     for ov in overlays:
         ov_path = resolve_path(ov["file"], edit_dir)
         inputs += ["-i", str(ov_path)]
-    inputs += ["-i", str(audio_path)]
+    inputs += ["-i", str(aac_path)]
 
     filter_parts: list[str] = []
     # PTS-shift every overlay so its frame 0 lands at start_in_output

@@ -24,7 +24,9 @@ USAGE
 listen: run it on a fast `render.py --draft` first, fix any seam where the last word before the |
 or the first word after it is missing or changed, re-draft, and only then render --native.
 sync: run it on the master before any upload. It exits 1 if any offset differs from the first by
-more than 40 ms (drift), 2 if it could not measure. It needs the segment clips render.py left
+more than 40 ms (drift) or the packaging fails Spotify's checks (one stereo audio stream,
+initial_padding 0, every decoded frame stereo, audio within 100 ms of the video length), and 2 if it
+could not measure. It needs the segment clips render.py left
 next to the EDL (clips_graded/ for a full or --native render); --clips picks another folder.
 """
 import sys, json, subprocess, tempfile, os, argparse
@@ -117,6 +119,30 @@ def _find_clips(edl, edl_dir, n_render_frames, clips_arg):
     return best
 
 
+def _packaging(path):
+    """Spotify for Creators packaging checks (tested Nov 11, 2026). Returns [(ok, message)]."""
+    probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                                       "stream=codec_type,channels,initial_padding,start_time,duration",
+                                       "-of", "json", path], capture_output=True, text=True, check=True).stdout)
+    audio = [st for st in probe["streams"] if st.get("codec_type") == "audio"]
+    video = [st for st in probe["streams"] if st.get("codec_type") == "video"]
+    out = [(len(audio) == 1, f"{len(audio)} audio stream(s), need exactly 1")]
+    if len(audio) != 1 or not video:
+        return out
+    a, v = audio[0], video[0]
+    out.append((int(a.get("channels") or 0) == 2, f"{a.get('channels')} channels, need 2"))
+    out.append((int(a.get("initial_padding") or 0) == 0,
+                f"initial_padding {a.get('initial_padding') or 0}, need 0 (no priming edit list)"))
+    frames = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "frame=channels",
+                             "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout.split()
+    odd = sum(1 for c in frames if c.strip(",") != "2")
+    out.append((bool(frames) and odd == 0, f"{len(frames)} decoded frames, {odd} not stereo"))
+    end = lambda st: float(st.get("start_time") or 0) + float(st.get("duration") or 0)
+    gap = end(a) - end(v)
+    out.append((abs(gap) <= 0.1, f"audio ends {gap * 1000:+.0f} ms from video, limit 100 ms"))
+    return out
+
+
 def sync(edl_path, render_path, source, clips_arg, n_points, tol_ms):
     import numpy as np
     import render as R
@@ -198,9 +224,15 @@ def sync(edl_path, render_path, source, clips_arg, n_points, tol_ms):
             rel = f"{d:+7.1f}"
             if abs(d) > tol_ms: mark = "  DRIFT"
         print(f"  {int(T//60):>4}:{T%60:05.2f}  {raw:9.3f}  {off:+7.1f}ms  {rel}ms  {score:.2f}{mark}")
+    pack = _packaging(render_path)
+    print("  packaging (Spotify): " + "  ".join(("ok" if ok else "FAIL") + f" {msg}" for ok, msg in pack))
     if len(good) < 3:
         print(f"FAIL: only {len(good)} point(s) matched cleanly, sync not verified")
         return 2
+    if not all(ok for ok, _ in pack):
+        print("FAIL: packaging differs from the file Spotify accepted on Nov 11, 2026. Re-render with the current render.py "
+              "(one ADTS AAC encode, stream-copied).")
+        return 1
     if ref is not None and abs(ref) > tol_ms:
         print(f"  note: constant offset of {ref:+.0f} ms at the first point")
     if worst > tol_ms:
