@@ -12,7 +12,7 @@ Drop raw footage in a folder, chat with Claude Code, get `final.mp4` back. Works
 
 - **Cuts out filler words** (`umm`, `uh`, false starts) and dead space between takes
 - **Auto color grades** every segment (warm cinematic, neutral punch, or any custom ffmpeg chain)
-- **30ms audio fades** at every cut so you never hear a pop
+- **Short audio fades** at every cut so you never hear a pop, in one continuous audio track that stays in sync with the picture
 - **Burns subtitles** in your style (2-word UPPERCASE chunks by default, fully customizable)
 - **Generates animation overlays** via [HyperFrames](https://github.com/heygen-com/hyperframes), [Remotion](https://www.remotion.dev/), [Manim](https://www.manim.community/), or PIL, spawned in parallel sub-agents, one per animation
 - **Self-evaluates the rendered output** at every cut boundary before showing you anything
