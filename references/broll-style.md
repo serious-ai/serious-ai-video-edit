@@ -24,6 +24,7 @@ Started November 26, 2026, from a frame-by-frame teardown of two creators whose 
 7. **Callouts lift and dim.** To point at one line of a capture, lift it out enlarged with an orange rim while the rest dims to about 45% (`BK.popout`), then sweep the highlighter behind the words as he says them. Camera pushes (`BK.camera`) are for whiteboards and wide screen recordings.
 8. **Every number on screen is one Chris says** (B1), no dashes or banned words on screen (B2), nothing flashes by (B3), nothing sits under the head card (B5).
 9. **Warm beats stay on his face.** Stories about people, credit to a team, the turn into a pledge or a close. That one is judgment, so it stays prose.
+10. **Draw each point in a form that fits it,** never one shape by habit. Three points can be a dial, a map, a ladder or a scoreboard. RoboNuggets' wildcard rule says the same: keep the palette and the voice, change the shape.
 
 ## What we took from whom
 
@@ -40,7 +41,7 @@ Not taken: his palette, his fonts (Outfit, DOTO), the dot terrain, the serif cha
 
 **Nick Saraev** (`teardowns/2026-11-26-nick-saraev.md`):
 - One frame for every shot, with a source pill in the window bar ("domain · date") so every real source credits itself (4TnNitqm8uM 2:10, F7QcpCl0Lg4 3:18).
-- A slow push-in on every held frame, 0.4 to 1.1% a second, on the content only, so a still never looks frozen.
+- A slow push-in on every held frame, on the content only, so a still never looks frozen. The teardown measured 0.4 to 1.1% a second within one shot. Not yet checked against our own renders: over a 40-second held whiteboard that rate crops the edges, so the sample uses 0.15%.
 - The headline stack: big left-aligned lines with the last line in the accent color, revealed last ("turn it off.", 4TnNitqm8uM 2:06).
 - Real documents two ways: a blurred page under a quote card with a highlighter sweep (4TnNitqm8uM 2:58), or a sharp page with an orange underline that reads along (4TnNitqm8uM 2:18).
 - Diagrams built one element at a time, 0.5 to 0.7 s apart, with a small ambient loop (dots travelling a connector) while they hold.
@@ -78,6 +79,8 @@ When Chris mentions work he did with Claude ("my Claude checked itself for the c
 2. Write a spec: the session path, and for each turn to show, its timestamp prefix, role, and the exact excerpts to keep. Excerpts must be verbatim (the script refuses anything else), so a capture can trim real work but never invent it. Keep tool output out.
 3. `python3 helpers/session_capture.py spec.json out/` writes bare records (no cwd, ids or metadata), runs the privacy scan, renders with claude-replay 0.11.0 (MIT, es617/claude-replay) inside a no-network sandbox, and captures `session.png` at device scale 2 with `layout.js` (block and line boxes).
 4. The privacy scan stops on emails, home and Drive paths, Notion, Google and claude.ai links, phone numbers, SSN shapes, patient identifiers (MRN, DOB), key shapes, and any name in the private denylist. Point `"denylist"` in the spec (or `$BROLL_DENYLIST`) at the private list in the claude-skills repo, `plugins/serious-ai/hooks/session_capture_denylist.txt`, and add every new client or prospect to it. No PHI and no client data ever goes into a capture: pick sessions about Serious AI's own tooling.
+What lands on screen is a re-render of the session's verbatim text in a Claude Code style window, not a screenshot of the app. Say so if anyone asks, and keep the date pill so the source is clear.
+
 5. In the scene, `BK.frame` the capture, `BK.typeLines` it in, glide `BK.cursor` to the line, `BK.popout` the line and sweep `BK.marker` as Chris says it. Tag it with the session date in the eyebrow.
 
 For a screen recording Chris makes himself (a live demo), the open-source Screen Studio alternatives found on November 26, 2026 are OpenScreen (MIT, about 40,000 stars, macOS, Windows, Linux) and Reframed (MIT, macOS, spring-smoothed cursor, click-cluster auto-zoom). Both are desktop apps for recording, not for this pipeline.
@@ -95,12 +98,15 @@ After each episode's gate, Chris's comments on the B-roll come back here, the wa
 3. If it is judgment, write it into the house style above, merged with what is there, and delete what it replaces.
 4. Each new episode renders, runs the lint, and is checked against the house style before the gate.
 
-| Date | Episode | Feedback | Where it lives |
-|---|---|---|---|
-| November 11, 2026 | Ep 333 | The three parts get three distinct visuals (dials), not one triangle | House style 5 (judgment) |
-| November 17, 2026 | Ep 334 | Content stays inside the left 1560 of 1920 so the head card covers nothing | B5 |
-| November 25, 2026 | Ep 335 | Every number on screen is one Chris says on camera | B1 |
-| November 25, 2026 | Ep 335 | The warm beats stay on his face | House style 9 (judgment) |
-| November 26, 2026 | standing | Show the real work when he mentions it, never client data or PHI | Session capture, `session_scan.py` |
-| November 26, 2026 | standing | No em dashes or banned words, brand colors and fonts only | B2, B4 |
+B1 (spoken numbers) was tested on unit cases and the Ep 334 sample, which has no numbers on screen. Its first real run is the next number-heavy episode, so read its hits closely that week.
 
+| Date | Episode | Feedback | Source | Where it lives |
+|---|---|---|---|---|
+| November 4, 2026 | Ep 331 | B-roll on the opening and every proof point, on a second file, the clean master kept for clips | Chris, podcast-publish routine step 5B | Routine 5B |
+| November 11, 2026 | Ep 333 | Draw the run sheet's points in a form that fits them, never a triangle by habit (a dial, a map, a ladder, a scoreboard) | Chris, podcast-publish routine step 5B.b | House style 10 (judgment) |
+| November 16, 2026 | Ep 334 | Graphics made with the run sheet are the scenes for their beats, not drawn twice | Chris, routine step 5B.b | Routine 5B.b |
+| November 16, 2026 | Ep 334 | Content stays inside the left 1560 of 1920 so the head card covers nothing | Ep 334 `prepared.json` (house practice, not a quoted comment) | B5 |
+| November 25, 2026 | Ep 335 | Every number on screen is one Chris says on camera | Ep 335 README (house practice) | B1 |
+| November 25, 2026 | Ep 335 | The warm beats stay on his face | Ep 335 README (house practice) | House style 9 (judgment) |
+| November 26, 2026 | standing | Show the real work when he mentions it, never client data or PHI | Chris, the brief for this upgrade | Session capture, `session_scan.py` |
+| November 26, 2026 | standing | No em dashes or banned words, brand colors and fonts only | Chris's voice rules and the brand skill | B2, B4 |
